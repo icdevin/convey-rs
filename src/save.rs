@@ -59,7 +59,7 @@ pub enum ObjectType {
   Component,
   Actor,
 }
-  
+
 impl ObjectType {
   pub fn from_i32(value: i32) -> Option<ObjectType> {
     match value {
@@ -93,19 +93,33 @@ pub struct ComponentHeader {
   pub parent_actor_name: String,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct Quaternion {
-  pub x: f32,
-  pub y: f32,
-  pub z: f32,
-  pub w: f32,
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Quaternion<T> {
+  pub x: T,
+  pub y: T,
+  pub z: T,
+  pub w: T,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct Vector {
-  pub x: f32,
-  pub y: f32,
-  pub z: f32,
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Vector2D<T> {
+  pub x: T,
+  pub y: T,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Vector<T> {
+  pub x: T,
+  pub y: T,
+  pub z: T,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Vector4<T> {
+  pub a: T,
+  pub b: T,
+  pub c: T,
+  pub d: T,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -114,9 +128,9 @@ pub struct ActorHeader {
   pub root_object: Option<String>,
   pub instance_name: String,
   pub needs_transform: i32,
-  pub rotation: Quaternion,
-  pub position: Vector,
-  pub scale: Vector,
+  pub rotation: Quaternion<f32>,
+  pub position: Vector<f32>,
+  pub scale: Vector<f32>,
   pub was_placed_in_level: i32,
 }
 
@@ -176,8 +190,8 @@ impl Object {
   }
 }
 
-// This is the same as a Collectable but 
-#[derive(Debug, Default, Serialize, Deserialize)]
+// This is the same as a Collectable but
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ObjectReference {
   pub level_name: String,
   pub path_name: String,
@@ -204,7 +218,7 @@ impl ObjectReferrable for ComponentHeader {
   fn set_level_name(&mut self, level_name: String) {
     self.root_object = Some(level_name);
   }
-  
+
   fn set_path_name(&mut self, path_name: String) {
     self.instance_name = path_name;
   }
@@ -214,7 +228,7 @@ impl ObjectReferrable for ActorHeader {
   fn set_level_name(&mut self, level_name: String) {
     self.root_object = Some(level_name);
   }
-  
+
   fn set_path_name(&mut self, path_name: String) {
     self.instance_name = path_name;
   }
