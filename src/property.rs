@@ -28,7 +28,7 @@ pub enum PropertyValue {
   Double(f64),
   #[strum(serialize = "Str", serialize = "Name")]
   String(String),
-  #[strum(serialize = "Interface")]
+  #[strum(serialize = "Object", serialize = "Interface")]
   Object(ObjectReference),
   Enum(HashMap<String, String>),
   Byte(ByteProperty),
@@ -265,6 +265,7 @@ pub enum ArrayPropertyStructValue {
   Vector(Vector<f64>),
   LinearColor(Color<f32>),
   FINGPUT1BufferPixel(FINGPUT1BufferPixel),
+  Properties(Vec<Property>),
   #[default]
   None,
 }

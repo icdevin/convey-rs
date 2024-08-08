@@ -66,7 +66,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
   /// parsed; used for unknown or redundant fields
   fn seek_length_prefixed_string<E: ByteOrder>(&mut self) -> Result<()> {
     let len = self.read_i32::<E>()?;
-    self.seek_relative(len as i64)?;
+    self.seek_relative(len.abs() as i64)?;
     Ok(())
   }
 
@@ -386,9 +386,9 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
       let unk_int_1 = self.read_i32::<E>()?;
       let class_name = self.read_length_prefixed_string::<E>()?;
 
-      if class_name == "/Script/FactoryGame.PrefabSignData" |
-      "/Script/FicsItNetworks.FINInternetCardHttpRequestFuture" |
-      "/Script/FactoryGame.InventoryItem" {
+      if class_name == "/Script/FactoryGame.PrefabSignData" ||
+         class_name == "/Script/FicsItNetworks.FINInternetCardHttpRequestFuture" ||
+         class_name == "/Script/FactoryGame.InventoryItem" {
         continue;
       }
 
@@ -467,13 +467,16 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     Ok(data)
   }
 
-  fn read_array_property_struct<E: ByteOrder>(&mut self, num_elements: i32) -> Result<(ArrayPropertyStruct, Vec<ArrayPropertyStructValue>)> {
+  fn read_array_property_struct<E: ByteOrder>(&mut self, num_elements: i32, header: &Header, property_name: &String) -> Result<(ArrayPropertyStruct, Vec<ArrayPropertyStructValue>)> {
     let mut struct_meta = ArrayPropertyStruct::default();
 
-    // Mirrors `property_name`
-    self.seek_length_prefixed_string::<E>()?;
+    // always mirrors `property_name`
+    let name = self.read_length_prefixed_string::<E>()?;
+    assert!(name == *property_name);
+
     // Always `StructProperty`
-    self.seek_length_prefixed_string::<E>()?;
+    let property_type = self.read_length_prefixed_string::<E>()?;
+    assert!(property_type == "StructProperty");
 
     struct_meta.size_bytes = self.read_i32::<E>()?;
 
@@ -490,6 +493,8 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     self.seek_relative(1)?;
 
     let mut elements: Vec<ArrayPropertyStructValue> = vec![];
+
+    debug!(">>>>> Reading array property struct of type '{}'", struct_meta.r#type);
 
     for _ in 0..num_elements {
       match struct_meta.r#type.as_str() {
@@ -528,7 +533,15 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
             ArrayPropertyStructValue::FINGPUT1BufferPixel(self.read_fingput1_buffer_pixel::<E>()?)
           );
         },
-        _ => panic!("Unknown array struct type encountered: {}", struct_meta.r#type),
+        _ => {
+          let mut properties: Vec<Property> = vec![];
+          while let Some(p) = self.read_property::<E>(header, Some(&struct_meta.r#type))? {
+            debug!(">>>>>> Adding array struct property: {} ({})", p.name, p.r#type);
+            properties.push(p);
+          }
+          debug!(">>>>>> Done reading array struct properties");
+          elements.push(ArrayPropertyStructValue::Properties(properties));
+        }
       }
     }
 
@@ -538,8 +551,12 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
   fn read_array_property<E: ByteOrder>(&mut self, property_name: &String, header: &Header) -> Result<ArrayProperty> {
     let mut property = ArrayProperty::default();
 
-    property.r#type = self.read_length_prefixed_string::<E>()?;
+    let r#type = self.read_length_prefixed_string::<E>()?;
+    property.r#type = r#type.replace("Property", "");
     let num_elements = self.read_i32::<E>()?;
+
+    // TODO: What is this?
+    self.seek_relative(1)?;
 
     match property.r#type.as_str() {
       "Bool" => {
@@ -614,10 +631,12 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
         }
       },
       "Struct" => {
-        let (struct_meta, elements) = self.read_array_property_struct::<E>(num_elements)?;
-        property.struct_meta = Some(struct_meta);
-        for element in elements {
-          property.elements.push(ArrayPropertyValue::Struct(element));
+        for _ in 0..num_elements {
+          let (struct_meta, elements) = self.read_array_property_struct::<E>(num_elements, header, property_name)?;
+          property.struct_meta = Some(struct_meta);
+          for element in elements {
+            property.elements.push(ArrayPropertyValue::Struct(element));
+          }
         }
       },
       _ => panic!("Unknown array element type encountered: {}", property.r#type),
@@ -922,12 +941,13 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
   }
 
   fn read_property<E: ByteOrder>(&mut self, header: &Header, parent_type: Option<&String>) -> Result<Option<Property>> {
-    let mut property = Property::default();
-
-    property.name = self.read_length_prefixed_string::<E>()?;
-    if property.name == "None" {
+    let name = self.read_length_prefixed_string::<E>()?;
+    if name == "None" {
       return Ok(None);
     }
+
+    let mut property = Property::default();
+    property.name = name;
 
     // TODO: What is this?
     let extra_byte = self.read_u8()?;
@@ -936,6 +956,9 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     }
 
     let r#type = self.read_length_prefixed_string::<E>()?;
+
+    debug!(">>>>> Reading property '{}' for '{:?}", property.name, parent_type);
+
     // Most/all properties end in "Property" e.g. "ObjectProperty" and we'd like to
     // remove the redundancy
     property.r#type = r#type.replace("Property", "");
@@ -945,7 +968,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
 
     let mut value = match PropertyValue::from_str(&property.r#type) {
       Ok(p) => p,
-      Err(e) => panic!("Unknown property '{}' encountered: {}", r#type, e),
+      Err(e) => panic!("Unknown property '{}' encountered: {}", property.r#type, e),
     };
 
     match &mut value {
@@ -976,6 +999,10 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
         property.guid = self.read_property_guid::<E>()?;
         enum_property.insert(name, self.read_length_prefixed_string::<E>()?);
         *p = enum_property;
+      },
+      PropertyValue::Float(p) => {
+        property.guid = self.read_property_guid::<E>()?;
+        *p = self.read_f32::<E>()?;
       }
       PropertyValue::Int(p) => {
         property.guid = self.read_property_guid::<E>()?;
@@ -985,11 +1012,25 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
         property.guid = self.read_property_guid::<E>()?;
         *p = self.read_i8()?;
       },
+      PropertyValue::Int64(p) => {
+        property.guid = self.read_property_guid::<E>()?;
+        *p = self.read_i64::<E>()?;
+      },
       PropertyValue::Map(p) => {
         *p = self.read_map_property::<E>(&property, parent_type, &header)?;
       },
+      PropertyValue::Object(p) => {
+        property.guid = self.read_property_guid::<E>()?;
+        let mut object = ObjectReference::default();
+        self.read_object_reference::<E>(&mut object, &header.map_name)?;
+        *p = object;
+      },
       PropertyValue::Set(p) => {
         *p = self.read_set_property::<E>(parent_type, &header)?;
+      },
+      PropertyValue::String(p) => {
+        property.guid = self.read_property_guid::<E>()?;
+        *p = self.read_length_prefixed_string::<E>()?;
       },
       PropertyValue::Struct(p) => {
         *p = self.read_struct_property::<E>(parent_type, &header)?;
@@ -998,16 +1039,22 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
         property.guid = self.read_property_guid::<E>()?;
         *p = self.read_text_property::<E>(header.build_version)?;
       },
-
+      PropertyValue::UInt32(p) => {
+        property.guid = self.read_property_guid::<E>()?;
+        *p = self.read_u32::<E>()?;
+      },
+      PropertyValue::UInt64(p) => {
+        property.guid = self.read_property_guid::<E>()?;
+        *p = self.read_u64::<E>()?;
+      },
       // This should never be encounted; The "None" variant only exists as a
       // placeholder so we can create a default `Property``
       PropertyValue::None => panic!(),
-      _ => {},
     }
 
     property.value = value;
 
-    debug!(">>>> Property: {:?}", property);
+    debug!(">>>>> Property: {:?}", property);
 
     Ok(Some(property))
   }
@@ -1045,7 +1092,9 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
       return Ok(object);
     }
 
+    debug!(">>>> Reading object properties");
     while let Some(property) = self.read_property::<E>(header, Some(object_header.get_type_path()))? {
+      debug!(">>>> Adding object property: {}", property.name);
       object.add_property(property);
     }
 
@@ -1068,7 +1117,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     } else {
       self.read_length_prefixed_string::<E>()?
     };
-    debug!(">> Reading level: {}", level.name);
+    debug!(">> Reading level: '{}'", level.name);
 
     level.object_headers_and_collectables_size_bytes = self.read_i64::<E>()?;
     let level_start_byte = self.stream_position()? as i64;
@@ -1157,7 +1206,7 @@ fn main() {
     Ok(h) => h,
     Err(e) => panic!("Error parsing save file header: {}", e),
   };
-  assert!(header.save_file_version > MIN_SAVE_FILE_VERSION);
+  assert!(header.save_file_version >= MIN_SAVE_FILE_VERSION);
   debug!("Header: {:#?}", header);
 
   info!("> Reading chunk metadata");
