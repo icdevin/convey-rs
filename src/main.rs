@@ -494,7 +494,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
 
     let mut elements: Vec<ArrayPropertyStructValue> = vec![];
 
-    debug!(">>>>> Reading array property struct of type '{}'", struct_meta.r#type);
+    debug!(">>>>> Reading array property struct of type '{}' with {} elements", struct_meta.r#type, num_elements);
 
     for _ in 0..num_elements {
       match struct_meta.r#type.as_str() {
@@ -553,10 +553,11 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
 
     let r#type = self.read_length_prefixed_string::<E>()?;
     property.r#type = r#type.replace("Property", "");
-    let num_elements = self.read_i32::<E>()?;
 
     // TODO: What is this?
     self.seek_relative(1)?;
+
+    let num_elements = self.read_i32::<E>()?;
 
     match property.r#type.as_str() {
       "Bool" => {
@@ -631,12 +632,10 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
         }
       },
       "Struct" => {
-        for _ in 0..num_elements {
-          let (struct_meta, elements) = self.read_array_property_struct::<E>(num_elements, header, property_name)?;
-          property.struct_meta = Some(struct_meta);
-          for element in elements {
-            property.elements.push(ArrayPropertyValue::Struct(element));
-          }
+        let (struct_meta, elements) = self.read_array_property_struct::<E>(num_elements, header, property_name)?;
+        property.struct_meta = Some(struct_meta);
+        for element in elements {
+          property.elements.push(ArrayPropertyValue::Struct(element));
         }
       },
       _ => panic!("Unknown array element type encountered: {}", property.r#type),
@@ -1117,7 +1116,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     } else {
       self.read_length_prefixed_string::<E>()?
     };
-    debug!(">> Reading level: '{}'", level.name);
+    debug!(">> Level name: '{}'", level.name);
 
     level.object_headers_and_collectables_size_bytes = self.read_i64::<E>()?;
     let level_start_byte = self.stream_position()? as i64;
@@ -1151,7 +1150,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     level.num_objects = self.read_i32::<E>()?;
     debug!(">>> Reading {} level objects", level.num_objects);
     for i in 0..level.num_objects {
-      debug!(">>>> Reading level object {i}");
+      debug!(">>>> Reading level object {}/{}", i + 1, level.num_objects);
 
       let object_header = match level.object_headers.get(i as usize) {
         Some(o) => o,
@@ -1177,6 +1176,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     let num_levels = self.read_i32::<E>()?;
     debug!(">> Reading {num_levels} levels");
     for i in 0..=num_levels {
+      debug!(">> Reading level {}/{}", i + 1, num_levels);
       levels.push(self.read_level::<E>(i == num_levels, header)?);
     }
 
