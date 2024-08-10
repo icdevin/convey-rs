@@ -6,6 +6,7 @@ use std::fs;
 use std::io::{self, Read, Seek};
 use std::result;
 use std::str::FromStr;
+use std::time::Instant;
 
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
 use env_logger::{self, Env};
@@ -875,7 +876,13 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
         end: self.read_i64::<E>()?,
       }),
       "IntPoint" => StructPropertyValue::IntVector2D(self.read_vector2d_int::<E>()?),
-      _ => panic!("Unknown struct property type encountered: {}", r#type),
+      _ => {
+        let mut properties: Vec<Property> = vec![];
+        while let Some(p) = self.read_property::<E>(header, Some(&r#type))? {
+          properties.push(p);
+        }
+        StructPropertyValue::Properties(properties)
+      },
     };
 
     Ok((r#type, value))
@@ -1064,13 +1071,16 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
       ObjectHeader::Component(_) => Object::Component(ComponentObject::default()),
     };
 
-    object.set_save_version(self.read_i32::<E>()?);
-    let start_byte = self.stream_position()?;
+    let object_save_version = self.read_i32::<E>()?;
+    object.set_save_version(object_save_version);
 
     // TODO: What is this?
     self.seek_relative(4)?;
 
     let object_size_bytes = self.read_i32::<E>()?;
+
+    let start_byte = self.stream_position()?;
+
     object.set_size_bytes(object_size_bytes);
 
     if let Object::Actor(ref mut object) = object {
@@ -1098,9 +1108,15 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     }
 
     let current_position = self.stream_position()?;
-    let missing_bytes = current_position - (start_byte + object_size_bytes as u64);
+    let current_object_end_position = start_byte as i64 + object_size_bytes as i64;
+    let missing_bytes = current_object_end_position - current_position as i64;
     if missing_bytes > 4 {
-      warn!("Missing {missing_bytes} bytes at {}", object_header.get_type_path());
+      if object_header.get_type_path().starts_with("/Script/FactoryGame.FG") {
+        self.seek_relative(8)?;
+      } else {
+        let skipped = self.read_hex::<E>(missing_bytes as usize)?;
+        warn!("Missing {missing_bytes} bytes at {}: {skipped}", object_header.get_type_path());
+      }
     } else {
       self.seek_relative(4)?;
     }
@@ -1108,7 +1124,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     Ok(object)
   }
 
-  fn read_level<E: ByteOrder>(&mut self, is_last_level: bool, header: &Header) -> Result<Level> {
+  fn read_level<E: ByteOrder>(&mut self, level_index: i32, is_last_level: bool, header: &Header) -> Result<Level> {
     let mut level = Level::default();
 
     level.name = if is_last_level {
@@ -1156,7 +1172,9 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
         Some(o) => o,
         None => panic!("No header for object at index {i}"),
       };
-      level.objects.push(self.read_object::<E>(object_header, header)?);
+      let object = self.read_object::<E>(object_header, header)?;
+      debug!("Level {}, Object {}/{}: {:#?}", level_index, i + 1, level.num_objects, object);
+      level.objects.push(object);
     }
 
     // Collectables are repeated after the object list so these can be
@@ -1175,9 +1193,9 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
 
     let num_levels = self.read_i32::<E>()?;
     debug!(">> Reading {num_levels} levels");
-    for i in 0..=num_levels {
-      debug!(">> Reading level {}/{}", i + 1, num_levels);
-      levels.push(self.read_level::<E>(i == num_levels, header)?);
+    for i in 0..num_levels {
+      debug!(">> Reading level {}/{} @ byte {}", i + 1, num_levels, self.stream_position()?);
+      levels.push(self.read_level::<E>(i, i == num_levels, header)?);
     }
 
     Ok(levels)
@@ -1187,6 +1205,8 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
 impl<R: io::Read + ?Sized + io::Seek> ReadSaveFileBytes for R {}
 
 fn main() {
+  let now = Instant::now();
+
   info!("Rust Belt: Satisfactory Save File Reader!");
 
   // Sets up the logger
@@ -1235,10 +1255,15 @@ fn main() {
   debug!("{}", serde_json::to_string_pretty(&partitions).unwrap());
 
   info!("> Reading level data");
-  let _levels = match body_cursor.read_levels::<LittleEndian>(&header) {
+  let levels = match body_cursor.read_levels::<LittleEndian>(&header) {
     Ok(l) => l,
     Err(e) => panic!("Error reading level data: {}", e),
   };
+  info!("> Finished reading level data, writing results to file");
 
-  info!("> Success!");
+  let level_json = serde_json::to_string_pretty(&levels).expect("Error stringifying level data");
+  fs::write("./data/data.json", level_json).expect("Error writing level data to file");
+
+  let elapsed = now.elapsed();
+  info!("> Successfully parsed save file in {} ms", elapsed.as_millis());
 }

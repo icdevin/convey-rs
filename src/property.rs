@@ -210,6 +210,7 @@ pub enum StructPropertyValue {
   FINLuaProcessorStateStorage(FINLuaProcessorStateStorage),
   FICFrameRange(FrameRange),
   IntPoint(Vector2D<i32>),
+  Properties(Vec<Property>),
   #[default]
   None
 }
