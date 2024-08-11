@@ -11,19 +11,19 @@ use env_logger::{self, Env};
 use flate2::bufread::ZlibDecoder;
 use log::{debug, warn};
 
-mod errors;
-mod property;
-mod save;
+pub mod errors;
+pub mod property;
+pub mod save;
 
 use crate::errors::ParseError;
 use crate::property::*;
 use crate::save::*;
 
-type Result<T> = result::Result<T, ParseError>;
+pub type Result<T> = result::Result<T, ParseError>;
 
 /// Establishes a minimum version to support which is currently the latest
 /// version as of the time of this library's creation
-const MIN_SAVE_FILE_VERSION: i32 = 42;
+pub const MIN_SAVE_FILE_VERSION: i32 = 42;
 
 /// The only entry point to this library. Given a Path or something that can be
 /// converted into one, attempts to read the file at that path and then reads
@@ -81,7 +81,7 @@ pub fn read_file<P: AsRef<Path>>(path: P) -> result::Result<Save, ParseError> {
 /// Extends `byteorder`'s `ReadBytesExt` (which itself extends `io::Read`)
 /// and `io::Seek` to build a robust byte reader with many great
 /// utility functions needed to support the custom save file format
-trait ReadSaveFileBytes: ReadBytesExt + Seek {
+pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
   /// Reads a quaternion with values as 32-bit floats
   fn read_quaternion<E: ByteOrder>(&mut self) -> Result<Quaternion<f32>> {
     Ok(Quaternion {

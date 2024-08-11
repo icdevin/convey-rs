@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Object","ObjectHeader","ObjectType"],"struct":["ActorHeader","ActorObject","ComponentHeader","ComponentObject","Header","Level","ObjectReference","Partition","Partitions","Quaternion","Save","Vector","Vector2D","Vector4"],"trait":["ObjectReferrable"],"type":["Collectable"]};
