@@ -9,6 +9,7 @@ use crate::{ObjectReference, Quaternion, Vector, Vector2D, Vector4};
 /// from floats to doubles with new file versions, and other times types
 /// may contain multiple inner types
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum Numeric {
   Int(i32),
   Long(i64),
@@ -16,7 +17,8 @@ pub enum Numeric {
   Double(f64),
 }
 
-#[derive(Clone, Debug, Default, EnumString, Serialize, Deserialize)]
+#[derive(Clone, Debug, EnumString, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum PropertyValue {
   Bool(u8),
   Int8(i8),
@@ -37,11 +39,9 @@ pub enum PropertyValue {
   Map(MapProperty),
   Set(SetProperty),
   Struct((String, StructPropertyValue)),
-  #[default]
-  None
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Property {
   pub name: String,
   pub r#type: String,
@@ -52,6 +52,7 @@ pub struct Property {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum MapPropertyKey {
   Int(i32),
   Long(i64),
@@ -64,6 +65,7 @@ pub enum MapPropertyKey {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum MapPropertyValue {
   Byte(u8),
   Bool(u8),
@@ -98,6 +100,7 @@ pub struct MapProperty {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum SetPropertyValue {
   Int(i32),
   UInt32(u32),
@@ -127,7 +130,7 @@ pub struct StructPropertyRailroadTrackPosition {
   pub forward: f32,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StructPropertyInventoryItem {
   pub unk_int_1: i32,
   pub item_name: String,
@@ -153,6 +156,7 @@ pub struct ItemAmount {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum FINLuaProcessorStateStorageStructValue {
   Vector(Vector<f32>),
   LinearColor(Color<f32>),
@@ -186,6 +190,7 @@ pub struct FrameRange {
 
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum StructPropertyValue {
   Color(Color<u8>),
   LinearColor(Color<f32>),
@@ -259,6 +264,7 @@ pub struct Color<T> {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum ArrayPropertyStructValue {
   InventoryItem(InventoryItem),
   GUID(String),
@@ -283,6 +289,7 @@ pub struct ArrayPropertyStruct {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum ArrayPropertyValue {
   Byte(u8),
   Bool(u8),
@@ -349,6 +356,7 @@ pub struct NoneHistory {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum TextPropertyHistory {
   BaseHistory(BaseHistory),
   ArgumentHistory(ArgumentHistory),

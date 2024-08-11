@@ -1,33 +1,190 @@
-use core::str;
 use std::collections::HashMap;
-use std::error::Error;
 
 use std::fs;
 use std::io::{self, Read, Seek};
+use std::path::Path;
 use std::result;
 use std::str::FromStr;
-use std::time::Instant;
 
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
 use env_logger::{self, Env};
 use flate2::bufread::ZlibDecoder;
-use log::{debug, info, warn};
+use log::{debug, warn};
 
+mod errors;
 mod property;
 mod save;
 
+use crate::errors::ParseError;
 use crate::property::*;
 use crate::save::*;
 
-pub type Result<T> = result::Result<T, Box<dyn Error>>;
+type Result<T> = result::Result<T, ParseError>;
 
+/// Establishes a minimum version to support which is currently the latest
+/// version as of the time of this library's creation
 const MIN_SAVE_FILE_VERSION: i32 = 42;
-const FILE_PATH: &str = "C:\\Users\\devin\\AppData\\Local\\FactoryGame\\Saved\\SaveGames\\76561198025332073\\Derp Quad_200724-013919.sav";
+
+/// The only entry point to this library. Given a Path or something that can be
+/// converted into one, attempts to read the file at that path and then reads
+/// its various components byte-by-byte to build up its own representation of
+/// the data within
+pub fn read_file<P: AsRef<Path>>(path: P) -> result::Result<Save, ParseError> {
+  // Sets up the logger
+  let env = Env::default();
+  env_logger::init_from_env(env);
+
+  // Reads the file as a byte array and establishes a cursor
+  // in order to read byte-by-byte
+  let file_bytes = fs::read(&path)?;
+  let file_size_bytes = file_bytes.len();
+  let mut cursor = io::Cursor::new(file_bytes);
+
+  // Begins by reading the file header bytes and checking the version of the
+  // file against the minimum supported version
+  let header = cursor.read_header::<LittleEndian>()?;
+  if header.save_file_version < MIN_SAVE_FILE_VERSION {
+    return Err(ParseError::UnsupportedFileVersion(header.save_file_version, MIN_SAVE_FILE_VERSION))
+  }
+
+  // Reads the chunk headers and the zlib-compressed chunk body bytes
+  // and drop the cursor as its no longer needed
+  let chunks = cursor.read_chunks::<LittleEndian>(file_size_bytes as u64)?;
+  drop(cursor);
+
+  // Decompresses each chunk's body bytes and appends it to a new byte array
+  // containing all chunk's decompressed body bytes in order
+  let mut body_bytes: Vec<u8> = vec![];
+  for chunk_bytes in chunks {
+    let mut z = ZlibDecoder::new(&chunk_bytes[..]);
+    z.read_to_end(&mut body_bytes)?;
+  }
+
+  // Establishes a new cursor for the decompressed body bytes
+  let mut body_cursor = io::Cursor::new(body_bytes);
+
+  // TODO: What is this?
+  body_cursor.seek_relative(8)?;
+
+  // Reads the partitions and levels and returns the complete save file object
+  // representation
+  let partitions = body_cursor.read_partitions::<LittleEndian>()?;
+  let levels = body_cursor.read_levels::<LittleEndian>(&header)?;
+
+  Ok(Save {
+    header,
+    partitions,
+    levels,
+  })
+}
 
 /// Extends `byteorder`'s `ReadBytesExt` (which itself extends `io::Read`)
 /// and `io::Seek` to build a robust byte reader with many great
 /// utility functions needed to support the custom save file format
-pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
+trait ReadSaveFileBytes: ReadBytesExt + Seek {
+  /// Reads a quaternion with values as 32-bit floats
+  fn read_quaternion<E: ByteOrder>(&mut self) -> Result<Quaternion<f32>> {
+    Ok(Quaternion {
+      x: self.read_f32::<E>()?,
+      y: self.read_f32::<E>()?,
+      z: self.read_f32::<E>()?,
+      w: self.read_f32::<E>()?,
+    })
+  }
+
+  /// Reads a quaternion with values as 64-bit floats
+  fn read_quaternion_double<E: ByteOrder>(&mut self) -> Result<Quaternion<f64>> {
+    Ok(Quaternion {
+      x: self.read_f64::<E>()?,
+      y: self.read_f64::<E>()?,
+      z: self.read_f64::<E>()?,
+      w: self.read_f64::<E>()?,
+    })
+  }
+
+  /// Reads a 2D vector with values as 64-bit floats
+  fn read_vector2d_double<E: ByteOrder>(&mut self) -> Result<Vector2D<f64>> {
+    Ok(Vector2D {
+      x: self.read_f64::<E>()?,
+      y: self.read_f64::<E>()?,
+    })
+  }
+
+  /// Reads a 2D vector with values as 32-bit integers
+  fn read_vector2d_int<E: ByteOrder>(&mut self) -> Result<Vector2D<i32>> {
+    Ok(Vector2D {
+      x: self.read_i32::<E>()?,
+      y: self.read_i32::<E>()?,
+    })
+  }
+
+  /// Reads a 3D vector with values as 32-bit floats
+  fn read_vector<E: ByteOrder>(&mut self) -> Result<Vector<f32>> {
+    Ok(Vector {
+      x: self.read_f32::<E>()?,
+      y: self.read_f32::<E>()?,
+      z: self.read_f32::<E>()?,
+    })
+  }
+
+  /// Reads a 3D vector with values as 64-bit floats
+  fn read_vector_double<E: ByteOrder>(&mut self) -> Result<Vector<f64>> {
+    Ok(Vector {
+      x: self.read_f64::<E>()?,
+      y: self.read_f64::<E>()?,
+      z: self.read_f64::<E>()?,
+    })
+  }
+
+  /// Reads a 3D vector with values as 32-bit integers
+  fn read_vector_int<E: ByteOrder>(&mut self) -> Result<Vector<i32>> {
+    Ok(Vector {
+      x: self.read_i32::<E>()?,
+      y: self.read_i32::<E>()?,
+      z: self.read_i32::<E>()?,
+    })
+  }
+
+  /// Reads a 4D vector with values as 64-bit floats
+  fn read_vector4_double<E: ByteOrder>(&mut self) -> Result<Vector4<f64>> {
+    Ok(Vector4 {
+      a: self.read_f64::<E>()?,
+      b: self.read_f64::<E>()?,
+      c: self.read_f64::<E>()?,
+      d: self.read_f64::<E>()?,
+    })
+  }
+
+  /// Reads a 4D vector with values as 32-bit integers
+  fn read_vector4_int<E: ByteOrder>(&mut self) -> Result<Vector4<i32>> {
+    Ok(Vector4 {
+      a: self.read_i32::<E>()?,
+      b: self.read_i32::<E>()?,
+      c: self.read_i32::<E>()?,
+      d: self.read_i32::<E>()?,
+    })
+  }
+
+  /// Reads an RGB color with alpha channel with values as 32-bit floats
+  fn read_color<E: ByteOrder>(&mut self) -> Result<Color<f32>> {
+    Ok(Color {
+      red: self.read_f32::<E>()?,
+      green: self.read_f32::<E>()?,
+      blue: self.read_f32::<E>()?,
+      alpha: self.read_f32::<E>()?,
+    })
+  }
+
+  /// Reads an RGB color with alpha channel with values as bytes
+  fn read_color_byte(&mut self) -> Result<Color<u8>> {
+    Ok(Color {
+      red: self.read_u8()?,
+      green: self.read_u8()?,
+      blue: self.read_u8()?,
+      alpha: self.read_u8()?,
+    })
+  }
+
   /// Reads a specified number of bytes and attempts to parse them as a
   /// UTF-16 string
   fn read_hex<E: ByteOrder>(&mut self, len: usize) -> Result<String> {
@@ -99,15 +256,15 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
   /// Reads a chunk header and its compressed body, performing some assertions
   /// on some fixed, well-known values
   fn read_chunk<E: ByteOrder>(&mut self) -> Result<Vec<u8>> {
-    let unreal_engine_package_sig = self.read_u32::<E>()?;
-    let unreal_engine_package_sig = format!("{:X}", unreal_engine_package_sig);
-    assert!(unreal_engine_package_sig == "9E2A83C1");
+    // Represents the Unreal Engine package signature (The hex value "9E2A83C1" as a u32)
+    self.seek_relative(4)?;
 
     // Padding
     self.seek_relative(4)?;
 
-    let max_chunk_size = self.read_u32::<E>()?;
-    assert!(max_chunk_size == 131_072);
+    // Represents the max chunk size and has historically been a static
+    // value of 131,072 (as a u32)
+    self.seek_relative(4)?;
 
     // Padding
     self.seek_relative(5)?;
@@ -136,6 +293,8 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     Ok(chunks)
   }
 
+  /// Reads the partition objects which start the main body and come before the
+  /// level data
   fn read_partitions<E: ByteOrder>(&mut self) -> Result<Partitions> {
     let mut partitions = Partitions::default();
     let num_partitions = self.read_i32::<E>()?;
@@ -146,16 +305,16 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     partitions.unk_num_3 = self.read_i32::<E>()?;
 
     for _ in 1..num_partitions {
-      let key = self.read_length_prefixed_string::<E>().unwrap();
+      let key = self.read_length_prefixed_string::<E>()?;
 
       let mut partition = Partition::default();
       partition.unk_num_1 = self.read_i32::<E>()?;
       partition.unk_num_2 = self.read_i32::<E>()?;
 
-      let num_levels = self.read_i32::<E>().unwrap();
+      let num_levels = self.read_i32::<E>()?;
       for _ in 0..num_levels {
-        let level_key = self.read_length_prefixed_string::<E>().unwrap();
-        let level_value = self.read_u32::<E>().unwrap();
+        let level_key = self.read_length_prefixed_string::<E>()?;
+        let level_value = self.read_u32::<E>()?;
         partition.levels.insert(level_key, level_value);
       }
 
@@ -164,6 +323,10 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     Ok(partitions)
   }
 
+  /// Given a type which implements `ObjectReferrable`, reads a level name and
+  /// a path name and sets one or both on the given object
+  ///
+  /// NOTE: Mutates the given object
   fn read_object_reference<E: ByteOrder>(&mut self, object: &mut impl ObjectReferrable, map_name: &String) -> Result<()> {
     let level_name = self.read_length_prefixed_string::<E>()?;
     let path_name = self.read_length_prefixed_string::<E>()?;
@@ -176,6 +339,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     Ok(())
   }
 
+  /// Reads an object of type `Component`'s header
   fn read_component_header<E: ByteOrder>(&mut self, map_name: &String) -> Result<ComponentHeader> {
     let mut component_header = ComponentHeader::default();
 
@@ -186,123 +350,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     Ok(component_header)
   }
 
-  fn read_quaternion<E: ByteOrder>(&mut self) -> Result<Quaternion<f32>> {
-    Ok(Quaternion {
-      x: self.read_f32::<E>()?,
-      y: self.read_f32::<E>()?,
-      z: self.read_f32::<E>()?,
-      w: self.read_f32::<E>()?,
-    })
-  }
-
-  fn read_quaternion_double<E: ByteOrder>(&mut self) -> Result<Quaternion<f64>> {
-    Ok(Quaternion {
-      x: self.read_f64::<E>()?,
-      y: self.read_f64::<E>()?,
-      z: self.read_f64::<E>()?,
-      w: self.read_f64::<E>()?,
-    })
-  }
-
-  fn read_quaternion_int<E: ByteOrder>(&mut self) -> Result<Quaternion<i32>> {
-    Ok(Quaternion {
-      x: self.read_i32::<E>()?,
-      y: self.read_i32::<E>()?,
-      z: self.read_i32::<E>()?,
-      w: self.read_i32::<E>()?,
-    })
-  }
-
-  fn read_vector2d<E: ByteOrder>(&mut self) -> Result<Vector2D<f32>> {
-    Ok(Vector2D {
-      x: self.read_f32::<E>()?,
-      y: self.read_f32::<E>()?,
-    })
-  }
-
-  fn read_vector2d_double<E: ByteOrder>(&mut self) -> Result<Vector2D<f64>> {
-    Ok(Vector2D {
-      x: self.read_f64::<E>()?,
-      y: self.read_f64::<E>()?,
-    })
-  }
-
-  fn read_vector2d_int<E: ByteOrder>(&mut self) -> Result<Vector2D<i32>> {
-    Ok(Vector2D {
-      x: self.read_i32::<E>()?,
-      y: self.read_i32::<E>()?,
-    })
-  }
-
-  fn read_vector<E: ByteOrder>(&mut self) -> Result<Vector<f32>> {
-    Ok(Vector {
-      x: self.read_f32::<E>()?,
-      y: self.read_f32::<E>()?,
-      z: self.read_f32::<E>()?,
-    })
-  }
-
-  fn read_vector_double<E: ByteOrder>(&mut self) -> Result<Vector<f64>> {
-    Ok(Vector {
-      x: self.read_f64::<E>()?,
-      y: self.read_f64::<E>()?,
-      z: self.read_f64::<E>()?,
-    })
-  }
-
-  fn read_vector_int<E: ByteOrder>(&mut self) -> Result<Vector<i32>> {
-    Ok(Vector {
-      x: self.read_i32::<E>()?,
-      y: self.read_i32::<E>()?,
-      z: self.read_i32::<E>()?,
-    })
-  }
-
-  fn read_vector4<E: ByteOrder>(&mut self) -> Result<Vector4<f32>> {
-    Ok(Vector4 {
-      a: self.read_f32::<E>()?,
-      b: self.read_f32::<E>()?,
-      c: self.read_f32::<E>()?,
-      d: self.read_f32::<E>()?,
-    })
-  }
-
-  fn read_vector4_double<E: ByteOrder>(&mut self) -> Result<Vector4<f64>> {
-    Ok(Vector4 {
-      a: self.read_f64::<E>()?,
-      b: self.read_f64::<E>()?,
-      c: self.read_f64::<E>()?,
-      d: self.read_f64::<E>()?,
-    })
-  }
-
-  fn read_vector4_int<E: ByteOrder>(&mut self) -> Result<Vector4<i32>> {
-    Ok(Vector4 {
-      a: self.read_i32::<E>()?,
-      b: self.read_i32::<E>()?,
-      c: self.read_i32::<E>()?,
-      d: self.read_i32::<E>()?,
-    })
-  }
-
-  fn read_color<E: ByteOrder>(&mut self) -> Result<Color<f32>> {
-    Ok(Color {
-      red: self.read_f32::<E>()?,
-      green: self.read_f32::<E>()?,
-      blue: self.read_f32::<E>()?,
-      alpha: self.read_f32::<E>()?,
-    })
-  }
-
-  fn read_color_byte(&mut self) -> Result<Color<u8>> {
-    Ok(Color {
-      red: self.read_u8()?,
-      green: self.read_u8()?,
-      blue: self.read_u8()?,
-      alpha: self.read_u8()?,
-    })
-  }
-
+  /// Reads an object of type `Actor`'s header
   fn read_actor_header<E: ByteOrder>(&mut self, map_name: &String) -> Result<ActorHeader> {
     let mut actor_header = ActorHeader::default();
 
@@ -317,15 +365,19 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     Ok(actor_header)
   }
 
+  /// Reads an object header for a level object by reading a 32-bit integer to
+  /// determine the header type and then calling the corresponding function
   fn read_level_object_header<E: ByteOrder>(&mut self, map_name: &String) -> Result<ObjectHeader> {
     let object_type = self.read_i32::<E>()?;
     match ObjectType::from_i32(object_type) {
       Some(ObjectType::Component) => Ok(ObjectHeader::Component(self.read_component_header::<E>(map_name)?)),
       Some(ObjectType::Actor) => Ok(ObjectHeader::Actor(self.read_actor_header::<E>(map_name)?)),
-      None => panic!("Unknown object type: {object_type}"),
+      None => return Err(ParseError::UnknownObject(object_type)),
     }
   }
 
+  /// Reads a byte flag to determine if the following 16 bytes will be a
+  /// hex-represented GUID
   fn read_property_guid<E: ByteOrder>(&mut self) -> Result<Option<String>> {
     let has_guid = self.read_u8()?;
     if has_guid == 0 {
@@ -335,6 +387,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     Ok(Some(self.read_hex::<E>(16)?))
   }
 
+  /// Reads a [FicsIt-Network Network trace](https://docs.ficsit.app/ficsit-networks/latest/NetworkTrace.html)
   fn read_fin_network_trace<E: ByteOrder>(&mut self) -> Result<FINNetworkTrace> {
     let mut trace = FINNetworkTrace::default();
 
@@ -354,6 +407,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     Ok(trace)
   }
 
+  /// Reads a [FicsIt-Network GPUT buffer pixel](https://github.com/Panakotta00/FicsIt-Networks/blob/master/Source/FicsItNetworks/Public/Computer/FINComputerGPUT1.h)
   fn read_fingput1_buffer_pixel<E: ByteOrder>(&mut self) -> Result<FINGPUT1BufferPixel> {
     let mut pixel = FINGPUT1BufferPixel::default();
 
@@ -364,6 +418,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     Ok(pixel)
   }
 
+  /// Reads a [FicsIt-Network Lua processor state storage](https://github.com/Panakotta00/FicsIt-Networks/blob/master/Source/FicsItNetworksLua/Private/FINLuaProcessorStateStorage.cpp)
   fn read_fin_lua_processor_state_storage<E: ByteOrder>(&mut self, header: &Header, parent_type: Option<&String>) -> Result<FINLuaProcessorStateStorage> {
     let mut data = FINLuaProcessorStateStorage::default();
 
@@ -456,7 +511,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
             }
           )
         },
-        _ => panic!("Unknown Lua processor state storage struct type encountered: {}", class_name),
+        _ => return Err(ParseError::UnknownLuaProcessorStateStorageStructType(class_name)),
       };
       data.structs.push(FINLuaProcessorStateStorageStruct {
         unk_int_1,
@@ -468,16 +523,15 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     Ok(data)
   }
 
-  fn read_array_property_struct<E: ByteOrder>(&mut self, num_elements: i32, header: &Header, property_name: &String) -> Result<(ArrayPropertyStruct, Vec<ArrayPropertyStructValue>)> {
+  /// Reads an array property whose element is of type struct
+  fn read_array_property_struct<E: ByteOrder>(&mut self, num_elements: i32, header: &Header) -> Result<(ArrayPropertyStruct, Vec<ArrayPropertyStructValue>)> {
     let mut struct_meta = ArrayPropertyStruct::default();
 
-    // always mirrors `property_name`
-    let name = self.read_length_prefixed_string::<E>()?;
-    assert!(name == *property_name);
+    // Always mirrors `property_name` (string)
+    self.seek_length_prefixed_string::<E>()?;
 
     // Always `StructProperty`
-    let property_type = self.read_length_prefixed_string::<E>()?;
-    assert!(property_type == "StructProperty");
+    self.seek_length_prefixed_string::<E>()?;
 
     struct_meta.size_bytes = self.read_i32::<E>()?;
 
@@ -549,6 +603,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     Ok((struct_meta, elements))
   }
 
+  /// Reads an array property
   fn read_array_property<E: ByteOrder>(&mut self, property_name: &String, header: &Header) -> Result<ArrayProperty> {
     let mut property = ArrayProperty::default();
 
@@ -633,19 +688,20 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
         }
       },
       "Struct" => {
-        let (struct_meta, elements) = self.read_array_property_struct::<E>(num_elements, header, property_name)?;
+        let (struct_meta, elements) = self.read_array_property_struct::<E>(num_elements, header)?;
         property.struct_meta = Some(struct_meta);
         for element in elements {
           property.elements.push(ArrayPropertyValue::Struct(element));
         }
       },
-      _ => panic!("Unknown array element type encountered: {}", property.r#type),
+      _ => return Err(ParseError::UnknownArrayElementType(property.r#type)),
     }
 
     Ok(property)
   }
 
-  fn read_map_property<E: ByteOrder>(&mut self, property: &Property, parent_type: Option<&String>, header: &Header) -> Result<MapProperty> {
+  /// Reads a map property
+  fn read_map_property<E: ByteOrder>(&mut self, property_name: &String, parent_type: Option<&String>, header: &Header) -> Result<MapProperty> {
     let parent_type = match parent_type {
       Some(t) => t,
       None => &String::from(""),
@@ -683,11 +739,11 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
           MapPropertyKey::Object(object)
         },
         "Struct" => {
-          if property.name == "Destroyed_Foliage_Transform" {
+          if property_name == "Destroyed_Foliage_Transform" {
             MapPropertyKey::DoubleVector(self.read_vector_double::<E>()?)
           } else if parent_type == "/BuildGunUtilities/BGU_Subsystem.BGU_Subsystem_C" {
             MapPropertyKey::FloatVector(self.read_vector::<E>()?)
-          } else if property.name == "mSaveData" || property.name == "mUnresolvedSaveData" {
+          } else if property_name == "mSaveData" || property_name == "mUnresolvedSaveData" {
             MapPropertyKey::IntVector(self.read_vector_int::<E>()?)
           } else {
             let mut keys: Vec<Property> = vec![];
@@ -697,7 +753,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
             MapPropertyKey::Properties(keys)
           }
         },
-        _ => panic!("Unknown map property key type encountered: {}", map_property.value_type),
+        _ => return Err(ParseError::UnknownMapKeyType(map_property.value_type)),
       };
 
       let value = match map_property.value_type.as_str() {
@@ -755,7 +811,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
           MapPropertyValue::Struct(properties)
         },
 
-        _ => panic!("Unknown map property value type encountered: {}", map_property.value_type),
+        _ => return Err(ParseError::UnknownMapValueType(map_property.value_type)),
       };
 
       map_property.keys.push(key);
@@ -765,6 +821,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     Ok(map_property)
   }
 
+  /// Reads a set property
   fn read_set_property<E: ByteOrder>(&mut self, parent_type: Option<&String>, header: &Header) -> Result<SetProperty> {
     let parent_type = match parent_type {
       Some(t) => t,
@@ -797,7 +854,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
             SetPropertyValue::FINNetworkTrace(self.read_fin_network_trace::<E>()?)
           }
         },
-        _ => panic!("Unknown set property type encountered: {}", property.r#type),
+        _ => return Err(ParseError::UnknownSetType(property.r#type)),
       };
       property.values.push(value);
     }
@@ -805,6 +862,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     Ok(property)
   }
 
+  /// Reads a struct property
   fn read_struct_property<E: ByteOrder>(&mut self, parent_type: Option<&String>, header: &Header) -> Result<(String, StructPropertyValue)> {
     let parent_type = match parent_type {
       Some(t) => t,
@@ -855,7 +913,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
         self.read_object_reference::<E>(&mut object, &header.map_name)?;
         let property = match self.read_property::<E>(header, None)? {
           Some(p) => p,
-          None => panic!("No property for struct property inventory item"),
+          None => return Err(ParseError::MissingInventoryItemProperty(item_name)),
         };
         StructPropertyValue::InventoryItem(StructPropertyInventoryItem {
           unk_int_1,
@@ -888,6 +946,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     Ok((r#type, value))
   }
 
+  /// Reads a text property
   fn read_text_property<E: ByteOrder>(&mut self, build_version: i32) -> Result<TextProperty> {
     let mut property = TextProperty::default();
 
@@ -914,9 +973,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
             4 => {
               argument.value = Box::new(self.read_text_property::<E>(build_version)?);
             },
-            _ => {
-              panic!("Unknown text property argument value type encountered: {}", argument.value_type);
-            }
+            _ => return Err(ParseError::UnknownTextArgumentValueType(argument.value_type)),
           }
         }
       },
@@ -938,22 +995,20 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
         history.value = self.read_length_prefixed_string::<E>()?;
         property.value = TextPropertyHistory::NoneHistory(history);
       },
-      _ => {
-        panic!("Unknown text property history type encountered: {}", property.history_type);
-      }
+      _ => return Err(ParseError::UnknownTextHistoryType(property.history_type)),
     }
 
     Ok(property)
   }
 
+  /// Reads a property
   fn read_property<E: ByteOrder>(&mut self, header: &Header, parent_type: Option<&String>) -> Result<Option<Property>> {
     let name = self.read_length_prefixed_string::<E>()?;
     if name == "None" {
       return Ok(None);
     }
 
-    let mut property = Property::default();
-    property.name = name;
+    let name = name;
 
     // TODO: What is this?
     let extra_byte = self.read_u8()?;
@@ -963,27 +1018,28 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
 
     let r#type = self.read_length_prefixed_string::<E>()?;
 
-    debug!(">>>>> Reading property '{}' for '{:?}", property.name, parent_type);
+    debug!(">>>>> Reading property '{}' for '{:?}", name, parent_type);
 
     // Most/all properties end in "Property" e.g. "ObjectProperty" and we'd like to
     // remove the redundancy
-    property.r#type = r#type.replace("Property", "");
+    let r#type = r#type.replace("Property", "");
 
-    property.size = self.read_i32::<E>()?;
-    property.index = self.read_i32::<E>()?;
+    let size = self.read_i32::<E>()?;
+    let index = self.read_i32::<E>()?;
 
-    let mut value = match PropertyValue::from_str(&property.r#type) {
+    let mut value = match PropertyValue::from_str(&r#type) {
       Ok(p) => p,
-      Err(e) => panic!("Unknown property '{}' encountered: {}", property.r#type, e),
+      Err(_) => return Err(ParseError::UnknownPropertyType(r#type)),
     };
 
+    let mut guid: Option<String> = None;
     match &mut value {
       PropertyValue::Array(p) => {
-        *p = self.read_array_property::<E>(&property.name, header)?;
+        *p = self.read_array_property::<E>(&name, header)?;
       },
       PropertyValue::Bool(p) => {
         *p = self.read_u8()?;
-        property.guid = self.read_property_guid::<E>()?;
+        guid = self.read_property_guid::<E>()?;
       },
       PropertyValue::Byte(p) => {
         let mut byte_property = ByteProperty::default();
@@ -996,37 +1052,37 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
         *p = byte_property;
       },
       PropertyValue::Double(p) => {
-        property.guid = self.read_property_guid::<E>()?;
+        guid = self.read_property_guid::<E>()?;
         *p = self.read_f64::<E>()?;
       },
       PropertyValue::Enum(p) => {
         let mut enum_property = HashMap::new();
         let name = self.read_length_prefixed_string::<E>()?;
-        property.guid = self.read_property_guid::<E>()?;
+        guid = self.read_property_guid::<E>()?;
         enum_property.insert(name, self.read_length_prefixed_string::<E>()?);
         *p = enum_property;
       },
       PropertyValue::Float(p) => {
-        property.guid = self.read_property_guid::<E>()?;
+        guid = self.read_property_guid::<E>()?;
         *p = self.read_f32::<E>()?;
       }
       PropertyValue::Int(p) => {
-        property.guid = self.read_property_guid::<E>()?;
+        guid = self.read_property_guid::<E>()?;
         *p = self.read_i32::<E>()?;
       },
       PropertyValue::Int8(p) => {
-        property.guid = self.read_property_guid::<E>()?;
+        guid = self.read_property_guid::<E>()?;
         *p = self.read_i8()?;
       },
       PropertyValue::Int64(p) => {
-        property.guid = self.read_property_guid::<E>()?;
+        guid = self.read_property_guid::<E>()?;
         *p = self.read_i64::<E>()?;
       },
       PropertyValue::Map(p) => {
-        *p = self.read_map_property::<E>(&property, parent_type, &header)?;
+        *p = self.read_map_property::<E>(&name, parent_type, &header)?;
       },
       PropertyValue::Object(p) => {
-        property.guid = self.read_property_guid::<E>()?;
+        guid = self.read_property_guid::<E>()?;
         let mut object = ObjectReference::default();
         self.read_object_reference::<E>(&mut object, &header.map_name)?;
         *p = object;
@@ -1035,36 +1091,38 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
         *p = self.read_set_property::<E>(parent_type, &header)?;
       },
       PropertyValue::String(p) => {
-        property.guid = self.read_property_guid::<E>()?;
+        guid = self.read_property_guid::<E>()?;
         *p = self.read_length_prefixed_string::<E>()?;
       },
       PropertyValue::Struct(p) => {
         *p = self.read_struct_property::<E>(parent_type, &header)?;
       },
       PropertyValue::Text(p) => {
-        property.guid = self.read_property_guid::<E>()?;
+        guid = self.read_property_guid::<E>()?;
         *p = self.read_text_property::<E>(header.build_version)?;
       },
       PropertyValue::UInt32(p) => {
-        property.guid = self.read_property_guid::<E>()?;
+        guid = self.read_property_guid::<E>()?;
         *p = self.read_u32::<E>()?;
       },
       PropertyValue::UInt64(p) => {
-        property.guid = self.read_property_guid::<E>()?;
+        guid = self.read_property_guid::<E>()?;
         *p = self.read_u64::<E>()?;
       },
-      // This should never be encounted; The "None" variant only exists as a
-      // placeholder so we can create a default `Property``
-      PropertyValue::None => panic!(),
     }
 
-    property.value = value;
-
-    debug!(">>>>> Property: {:?}", property);
-
-    Ok(Some(property))
+    Ok(Some(Property {
+      name,
+      size,
+      r#type,
+      index,
+      guid,
+      value,
+    }))
   }
 
+  /// Reads an object by reading its meta followed by its properties and
+  /// validating its supposed size against actual size and seeking past any gap
   fn read_object<E: ByteOrder>(&mut self, object_header: &ObjectHeader, header: &Header) -> Result<Object> {
     let mut object = match object_header {
       ObjectHeader::Actor(_) => Object::Actor(ActorObject::default()),
@@ -1079,6 +1137,9 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
 
     let object_size_bytes = self.read_i32::<E>()?;
 
+    // Marks the start byte so that, after reading the object's components and
+    // properties (when the object has ended), the position can be checked to
+    // see if any bytes are missing
     let start_byte = self.stream_position()?;
 
     object.set_size_bytes(object_size_bytes);
@@ -1108,8 +1169,21 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     }
 
     let current_position = self.stream_position()?;
-    let current_object_end_position = start_byte as i64 + object_size_bytes as i64;
-    let missing_bytes = current_object_end_position - current_position as i64;
+
+    // By adding the given size of this object to the start byte, it can be
+    // determined where this object *should* end and whether or not the object
+    // ends where it should have
+    let current_object_end_position = start_byte + object_size_bytes as u64;
+
+    // Pre-empts a negative value for `missing_bytes` by first checking if
+    // the supposed end position is *beyond* the current position. In other
+    // words, if the current object is *larger* than was told
+    if current_object_end_position > current_position {
+      return Err(ParseError::ObjectLength(object_header.get_type_path().clone()))
+    }
+
+    // Handles any number of missing bytes by seeking past that amount of bytes
+    let missing_bytes = current_position - current_object_end_position;
     if missing_bytes > 4 {
       if object_header.get_type_path().starts_with("/Script/FactoryGame.FG") {
         self.seek_relative(8)?;
@@ -1124,6 +1198,8 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     Ok(object)
   }
 
+  /// Reads a single level by reading its name, object headers, collectables,
+  /// objects, and seeking past a repeated set of collectables if set
   fn read_level<E: ByteOrder>(&mut self, level_index: i32, is_last_level: bool, header: &Header) -> Result<Level> {
     let mut level = Level::default();
 
@@ -1134,23 +1210,23 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     };
     debug!(">> Level name: '{}'", level.name);
 
-    level.object_headers_and_collectables_size_bytes = self.read_i64::<E>()?;
+    let object_headers_and_collectables_size_bytes = self.read_i64::<E>()?;
     let level_start_byte = self.stream_position()? as i64;
 
     // Reads object headers for this level
-    level.num_object_headers = self.read_i32::<E>()?;
-    debug!(">>> Reading {} level object headers", level.num_object_headers);
-    for _i in 0..level.num_object_headers {
+    let num_object_headers = self.read_i32::<E>()?;
+    debug!(">>> Reading {} level object headers", num_object_headers);
+    for _i in 0..num_object_headers {
       level.object_headers.push(self.read_level_object_header::<E>(&header.map_name)?);
     }
 
     // Reads collectables for this level
     let current_position = self.stream_position()? as i64;
-    let stop_byte = level_start_byte + level.object_headers_and_collectables_size_bytes - 4;
+    let stop_byte = level_start_byte + object_headers_and_collectables_size_bytes - 4;
     if current_position < stop_byte {
-      level.num_collectables = self.read_i32::<E>()?;
-      debug!(">>> Reading {} level collectables", level.num_collectables);
-      for _ in 0..level.num_collectables {
+      let num_collectables = self.read_i32::<E>()?;
+      debug!(">>> Reading {} level collectables", num_collectables);
+      for _ in 0..num_collectables {
         let mut collectable = Collectable::default();
         self.read_object_reference::<E>(&mut collectable, &header.map_name)?;
         level.collectables.push(collectable);
@@ -1161,19 +1237,21 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
       self.seek_relative(4)?;
     }
 
+    // Represents the size of this level's objects in bytes (as i64)
+    self.seek_relative(8)?;
+
     // Reads objects for this level
-    level.objects_size_bytes = self.read_i64::<E>()?;
-    level.num_objects = self.read_i32::<E>()?;
-    debug!(">>> Reading {} level objects", level.num_objects);
-    for i in 0..level.num_objects {
-      debug!(">>>> Reading level object {}/{}", i + 1, level.num_objects);
+    let num_objects = self.read_i32::<E>()?;
+    debug!(">>> Reading {} level objects", num_objects);
+    for i in 0..num_objects {
+      debug!(">>>> Reading level object {}/{}", i + 1, num_objects);
 
       let object_header = match level.object_headers.get(i as usize) {
         Some(o) => o,
-        None => panic!("No header for object at index {i}"),
+        None => return Err(ParseError::MissingObjectHeader(level.name)),
       };
       let object = self.read_object::<E>(object_header, header)?;
-      debug!("Level {}, Object {}/{}: {:#?}", level_index, i + 1, level.num_objects, object);
+      debug!("Level {}, Object {}/{}: {:#?}", level_index, i + 1, num_objects, object);
       level.objects.push(object);
     }
 
@@ -1188,6 +1266,8 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     Ok(level)
   }
 
+  /// Reads a 32-bit integer to determine the number of levels present and then
+  /// reads each level one-by-one
   fn read_levels<E: ByteOrder>(&mut self, header: &Header) -> Result<Vec<Level>> {
     let mut levels: Vec<Level> = vec![];
 
@@ -1202,68 +1282,6 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
   }
 }
 
-impl<R: io::Read + ?Sized + io::Seek> ReadSaveFileBytes for R {}
-
-fn main() {
-  let now = Instant::now();
-
-  info!("Rust Belt: Satisfactory Save File Reader!");
-
-  // Sets up the logger
-  let env = Env::default();
-  env_logger::init_from_env(env);
-
-  let file_bytes = match fs::read(FILE_PATH) {
-    Ok(b) => b,
-    Err(e) => panic!("Error reading file ({FILE_PATH}): {:?}", e),
-  };
-
-  let file_size_bytes = file_bytes.len();
-  let mut cursor = io::Cursor::new(file_bytes);
-
-  info!("> Reading file header");
-  let header = match cursor.read_header::<LittleEndian>() {
-    Ok(h) => h,
-    Err(e) => panic!("Error parsing save file header: {}", e),
-  };
-  assert!(header.save_file_version >= MIN_SAVE_FILE_VERSION);
-  debug!("Header: {:#?}", header);
-
-  info!("> Reading chunk metadata");
-  let chunks = match cursor.read_chunks::<LittleEndian>(file_size_bytes as u64) {
-    Ok(c) => c,
-    Err(e) => panic!("Error parsing chunk meta: {}", e),
-  };
-  drop(cursor);
-
-  info!("> Decompressing chunk bytes");
-  let mut body_bytes: Vec<u8> = vec![];
-  for chunk_bytes in chunks {
-    let mut z = ZlibDecoder::new(&chunk_bytes[..]);
-    z.read_to_end(&mut body_bytes).unwrap();
-  }
-
-  let mut body_cursor = io::Cursor::new(body_bytes);
-  // Skips some unknown data
-  body_cursor.seek_relative(8).unwrap();
-
-  info!("> Reading partition data");
-  let partitions = match body_cursor.read_partitions::<LittleEndian>() {
-    Ok(p) => p,
-    Err(e) => panic!("Error reading partition data: {}", e),
-  };
-  debug!("{}", serde_json::to_string_pretty(&partitions).unwrap());
-
-  info!("> Reading level data");
-  let levels = match body_cursor.read_levels::<LittleEndian>(&header) {
-    Ok(l) => l,
-    Err(e) => panic!("Error reading level data: {}", e),
-  };
-  info!("> Finished reading level data, writing results to file");
-
-  let level_json = serde_json::to_string_pretty(&levels).expect("Error stringifying level data");
-  fs::write("./data/data.json", level_json).expect("Error writing level data to file");
-
-  let elapsed = now.elapsed();
-  info!("> Successfully parsed save file in {} ms", elapsed.as_millis());
-}
+/// Auto-implements the above trait for all types which also implement both
+/// `io::Read` and `io::Seek`
+impl<R: io::Read + io::Seek> ReadSaveFileBytes for R {}

@@ -5,6 +5,13 @@ use serde::{Serialize, Deserialize};
 use crate::property::*;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Save {
+  pub header: Header,
+  pub partitions: Partitions,
+  pub levels: Vec<Level>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Header {
   pub save_header_version: i32,
   pub save_file_version: i32,
@@ -44,16 +51,10 @@ pub struct Partitions {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Level {
   pub name: String,
-  pub object_headers_and_collectables_size_bytes: i64,
-  pub num_object_headers: i32,
   pub object_headers: Vec<ObjectHeader>,
-  pub num_collectables: i32,
   pub collectables: Vec<Collectable>,
-  pub objects_size_bytes: i64,
-  pub num_objects: i32,
   pub objects: Vec<Object>,
 }
-
 
 pub enum ObjectType {
   Component,
@@ -71,6 +72,7 @@ impl ObjectType {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum ObjectHeader {
   Component(ComponentHeader),
   Actor(ActorHeader),
@@ -155,6 +157,7 @@ pub struct ActorObject {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum Object {
   Component(ComponentObject),
   Actor(ActorObject),
