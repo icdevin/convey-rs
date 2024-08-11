@@ -1,3 +1,4 @@
 (function() {var implementors = {
+"convey_rs":[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.80.0/core/fmt/trait.Display.html\" title=\"trait core::fmt::Display\">Display</a> for <a class=\"enum\" href=\"convey_rs/errors/enum.ParseError.html\" title=\"enum convey_rs::errors::ParseError\">ParseError</a>"]],
 "rust_belt":[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.80.0/core/fmt/trait.Display.html\" title=\"trait core::fmt::Display\">Display</a> for <a class=\"enum\" href=\"rust_belt/errors/enum.ParseError.html\" title=\"enum rust_belt::errors::ParseError\">ParseError</a>"]]
 };if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

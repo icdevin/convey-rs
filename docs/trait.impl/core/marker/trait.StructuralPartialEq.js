@@ -1,3 +1,4 @@
 (function() {var implementors = {
+"convey_rs":[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.80.0/core/marker/trait.StructuralPartialEq.html\" title=\"trait core::marker::StructuralPartialEq\">StructuralPartialEq</a> for <a class=\"struct\" href=\"convey_rs/save/struct.ObjectReference.html\" title=\"struct convey_rs::save::ObjectReference\">ObjectReference</a>"]],
 "rust_belt":[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.80.0/core/marker/trait.StructuralPartialEq.html\" title=\"trait core::marker::StructuralPartialEq\">StructuralPartialEq</a> for <a class=\"struct\" href=\"rust_belt/save/struct.ObjectReference.html\" title=\"struct rust_belt::save::ObjectReference\">ObjectReference</a>"]]
 };if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

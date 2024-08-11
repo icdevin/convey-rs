@@ -1,1 +1,1 @@
-window.ALL_CRATES = ["rust_belt"];
+window.ALL_CRATES = ["convey_rs","rust_belt"];

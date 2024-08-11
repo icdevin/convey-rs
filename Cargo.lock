@@ -132,6 +132,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fd119d74b830634cea2a0f58bbd0d54540518a14397557951e79340abc28c0"
 
 [[package]]
+name = "convey-rs"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "chrono",
+ "env_logger",
+ "flate2",
+ "log",
+ "serde",
+ "serde_json",
+ "strum",
+ "thiserror",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -323,21 +338,6 @@ name = "regex-syntax"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a66a03ae7c801facd77a29370b4faec201768915ac14a721ba36f20bc9c209b"
-
-[[package]]
-name = "rust-belt"
-version = "0.1.0"
-dependencies = [
- "byteorder",
- "chrono",
- "env_logger",
- "flate2",
- "log",
- "serde",
- "serde_json",
- "strum",
- "thiserror",
-]
 
 [[package]]
 name = "rustversion"

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MIN_SAVE_FILE_VERSION"],"fn":["read_file"],"mod":["errors","property","save"],"trait":["ReadSaveFileBytes"],"type":["Result"]};
