@@ -1178,12 +1178,12 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     // Pre-empts a negative value for `missing_bytes` by first checking if
     // the supposed end position is *beyond* the current position. In other
     // words, if the current object is *larger* than was told
-    if current_object_end_position > current_position {
+    if current_object_end_position < current_position {
       return Err(ParseError::ObjectLength(object_header.get_type_path().clone()))
     }
 
     // Handles any number of missing bytes by seeking past that amount of bytes
-    let missing_bytes = current_position - current_object_end_position;
+    let missing_bytes = current_object_end_position - current_position;
     if missing_bytes > 4 {
       if object_header.get_type_path().starts_with("/Script/FactoryGame.FG") {
         self.seek_relative(8)?;
