@@ -32,7 +32,7 @@ pub const MIN_SAVE_FILE_VERSION: i32 = 42;
 pub fn read_file<P: AsRef<Path>>(path: P) -> result::Result<Save, ParseError> {
   // Sets up the logger
   let env = Env::default();
-  env_logger::init_from_env(env);
+  let _ = env_logger::try_init_from_env(env);
 
   // Reads the file as a byte array and establishes a cursor
   // in order to read byte-by-byte
