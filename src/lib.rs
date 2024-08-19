@@ -7,7 +7,6 @@ use std::result;
 use std::str::FromStr;
 
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
-use env_logger::{self, Env};
 use flate2::bufread::ZlibDecoder;
 use log::{debug, warn};
 
@@ -30,10 +29,6 @@ pub const MIN_SAVE_FILE_VERSION: i32 = 42;
 /// its various components byte-by-byte to build up its own representation of
 /// the data within
 pub fn read_file<P: AsRef<Path>>(path: P) -> result::Result<Save, ParseError> {
-  // Sets up the logger
-  let env = Env::default();
-  let _ = env_logger::try_init_from_env(env);
-
   // Reads the file as a byte array and establishes a cursor
   // in order to read byte-by-byte
   let file_bytes = fs::read(&path)?;
@@ -298,18 +293,18 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
   fn read_partitions<E: ByteOrder>(&mut self) -> Result<Partitions> {
     let mut partitions = Partitions::default();
     let num_partitions = self.read_i32::<E>()?;
-    partitions.unk_str_1 = self.read_length_prefixed_string::<E>()?;
-    partitions.unk_num_1 = self.read_i64::<E>()?;
-    partitions.unk_num_2 = self.read_i32::<E>()?;
-    partitions.unk_str_2 = self.read_length_prefixed_string::<E>()?;
-    partitions.unk_num_3 = self.read_i32::<E>()?;
+
+    self.seek_length_prefixed_string::<E>()?;
+    self.seek_relative(12)?;
+    self.seek_length_prefixed_string::<E>()?;
+    self.seek_relative(4)?;
 
     for _ in 1..num_partitions {
       let key = self.read_length_prefixed_string::<E>()?;
 
       let mut partition = Partition::default();
-      partition.unk_num_1 = self.read_i32::<E>()?;
-      partition.unk_num_2 = self.read_i32::<E>()?;
+
+      self.seek_relative(8)?;
 
       let num_levels = self.read_i32::<E>()?;
       for _ in 0..num_levels {
@@ -374,6 +369,18 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
       Some(ObjectType::Actor) => Ok(ObjectHeader::Actor(self.read_actor_header::<E>(map_name)?)),
       None => return Err(ParseError::UnknownObject(object_type)),
     }
+  }
+
+  /// Reads and parses an ID for the launching platform (Steam, Epic Online Services, etc)
+  fn read_platform_id<E: ByteOrder>(&mut self) -> Result<String> {
+    let len = self.read_u8()?;
+    let mut id = String::new();
+    for _ in 0..len {
+      let byte = self.read_u8()?;
+      let hex_byte = format!("{:02x}", byte);
+      id.push_str(&hex_byte)
+    }
+    Ok(id.trim_start_matches("0").to_string())
   }
 
   /// Reads a byte flag to determine if the following 16 bytes will be a
@@ -878,7 +885,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
       "Color" => StructPropertyValue::Color(self.read_color_byte()?),
       "LinearColor" => StructPropertyValue::LinearColor(self.read_color::<E>()?),
       "Vector" | "Rotator" => {
-        if parent_type == "SpawnData" {
+        if parent_type != "SpawnData" {
           StructPropertyValue::DoubleVector(self.read_vector_double::<E>()?)
         } else {
           StructPropertyValue::FloatVector(self.read_vector::<E>()?)
@@ -1044,6 +1051,7 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
       PropertyValue::Byte(p) => {
         let mut byte_property = ByteProperty::default();
         byte_property.r#type = self.read_length_prefixed_string::<E>()?;
+        guid = self.read_property_guid::<E>()?;
         if byte_property.r#type == "None" {
           byte_property.byte_value = Some(self.read_u8()?);
         } else {
@@ -1121,13 +1129,16 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
     }))
   }
 
-  /// Reads an object by reading its meta followed by its properties and
-  /// validating its supposed size against actual size and seeking past any gap
+  /// Reads an object by reading its meta followed by its properties and extras
+  /// and validating its supposed size against actual size and seeking past any
+  /// gap
   fn read_object<E: ByteOrder>(&mut self, object_header: &ObjectHeader, header: &Header) -> Result<Object> {
     let mut object = match object_header {
       ObjectHeader::Actor(_) => Object::Actor(ActorObject::default()),
       ObjectHeader::Component(_) => Object::Component(ComponentObject::default()),
     };
+
+    debug!(">>>> Reading object for path {}", object_header.get_type_path());
 
     let object_save_version = self.read_i32::<E>()?;
     object.set_save_version(object_save_version);
@@ -1182,17 +1193,192 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
       return Err(ParseError::ObjectLength(object_header.get_type_path().clone()))
     }
 
-    // Handles any number of missing bytes by seeking past that amount of bytes
-    let missing_bytes = current_object_end_position - current_position;
-    if missing_bytes > 4 {
-      if object_header.get_type_path().starts_with("/Script/FactoryGame.FG") {
-        self.seek_relative(8)?;
-      } else {
-        let skipped = self.read_hex::<E>(missing_bytes as usize)?;
-        warn!("Missing {missing_bytes} bytes at {}: {skipped}", object_header.get_type_path());
-      }
-    } else {
-      self.seek_relative(4)?;
+    match object_header.get_type() {
+      Some(ObjectHeaderType::Circuit) => {
+        let mut extra = Extra::default();
+        extra.count = self.read_i32::<E>()?;
+
+        let num_circuits = self.read_i32::<E>()?;
+        for _ in 0..num_circuits {
+          let mut circuit = Circuit::default();
+          circuit.id = self.read_i32::<E>()?;
+          circuit.level_name = self.read_length_prefixed_string::<E>()?;
+          circuit.path_name = self.read_length_prefixed_string::<E>()?;
+          extra.elements.push(circuit);
+        }
+
+        object.set_extra(ObjectExtra::Circuit(extra));
+      },
+      Some(ObjectHeaderType::Conveyor) => {
+        let mut extra = Extra::default();
+        extra.count = self.read_i32::<E>()?;
+
+        let num_items = self.read_i32::<E>()?;
+        for _ in 0..num_items {
+          let mut item = Conveyor::default();
+          item.length = self.read_i32::<E>()?;
+          item.name = self.read_length_prefixed_string::<E>()?;
+
+          self.seek_length_prefixed_string::<E>()?;
+          self.seek_length_prefixed_string::<E>()?;
+
+          item.position = self.read_f32::<E>()?;
+          extra.elements.push(item);
+        }
+
+        object.set_extra(ObjectExtra::Conveyor(extra));
+      },
+      Some(ObjectHeaderType::DroneTransport) => {
+        let mut extra = DroneTransport::default();
+        extra.unk_int_1 = self.read_i32::<E>()?;
+        extra.unk_int_2 = self.read_i32::<E>()?;
+
+        let num_active_action_elements = self.read_i32::<E>()?;
+        for _ in 0..num_active_action_elements {
+          let mut element = DroneTransportAction::default();
+          element.name = self.read_length_prefixed_string::<E>()?;
+          while let Some(p) = self.read_property::<E>(header, None)? {
+            element.properties.push(p);
+          }
+        }
+
+        let num_action_queue_elements = self.read_i32::<E>()?;
+        for _ in 0..num_action_queue_elements {
+          let mut element = DroneTransportAction::default();
+          element.name = self.read_length_prefixed_string::<E>()?;
+          while let Some(p) = self.read_property::<E>(header, None)? {
+            element.properties.push(p);
+          }
+        }
+
+        object.set_extra(ObjectExtra::DroneTransport(extra));
+      },
+      Some(ObjectHeaderType::FreightWagon) | Some(ObjectHeaderType::Locomotive) => {
+        let mut extra = LocomotiveExtra::default();
+        extra.count = self.read_i32::<E>()?;
+
+        let num_elements = self.read_i32::<E>()?;
+        for _ in 0..num_elements {
+          let mut element = Locomotive::default();
+          element.name = self.read_length_prefixed_string::<E>()?;
+          element.unk_str_1 = self.read_length_prefixed_string::<E>()?;
+          extra.elements.push(element);
+        }
+
+        let mut prev = ObjectReference::default();
+        self.read_object_reference::<E>(&mut prev, &header.map_name)?;
+        extra.prev = prev;
+
+        let mut next = ObjectReference::default();
+        self.read_object_reference::<E>(&mut next, &header.map_name)?;
+        extra.next = next;
+      },
+      Some(ObjectHeaderType::Game) => {
+        let mut extra = Extra::default();
+        extra.count = self.read_i32::<E>()?;
+
+        let num_games = self.read_i32::<E>()?;
+        for _ in 0..num_games {
+          let mut object = ObjectReference::default();
+          self.read_object_reference::<E>(&mut object, &header.map_name)?;
+          extra.elements.push(object);
+        }
+
+        object.set_extra(ObjectExtra::Game(extra))
+      },
+      Some(ObjectHeaderType::PlayerState) => {
+        let missing_player_state = current_object_end_position - current_position;
+
+        let missing = self.read_hex::<E>(missing_player_state as usize)?;
+        object.set_missing(missing.clone());
+        self.seek_relative(-(missing_player_state as i64 * 2))?;
+
+        if missing_player_state > 0 {
+          let mut player_state = PlayerState::default();
+          player_state.count = self.read_i32::<E>()?;
+          let player_type = self.read_u8()?;
+          match player_type {
+            3 => {}, // Do nothin'!
+            8 => player_state.platform_id = Some(self.read_length_prefixed_string::<E>()?),
+            17 => player_state.eos_id = Some(self.read_platform_id::<E>()?),
+            25 | 29 => player_state.steam_id = Some(self.read_platform_id::<E>()?),
+            241 => {
+              let id_type = self.read_u8()?;
+              let len = self.read_i32::<E>()?;
+              let mut id = String::new();
+              for _ in 0..len {
+                let byte = self.read_u8()?;
+                let hex_byte = format!("{:02x}", byte);
+                id.push_str(&hex_byte)
+              }
+
+              match id_type {
+                1 => {
+                  let id = id.trim_start_matches("0")[1..33].to_string();
+                  player_state.eos_id = Some(id);
+                },
+                6 => {
+                  player_state.steam_id = Some(id);
+                },
+                _ => return Err(ParseError::UnknownPlayerIDType(id_type)),
+              }
+            },
+            248 => {
+              self.seek_length_prefixed_string::<E>()?;
+              let id = self.read_length_prefixed_string::<E>()?;
+              let id = id.split("|").next().map(|s| s.to_string());
+              player_state.eos_id = id;
+            },
+            249 => self.seek_length_prefixed_string::<E>()?, // Do nothin' except skip!
+            _ => return Err(ParseError::UnknownPlayerType(player_type)),
+          }
+
+          object.set_extra(ObjectExtra::PlayerState(player_state));
+        }
+      },
+      Some(ObjectHeaderType::PowerLine) => {
+        let mut extra = PowerLine::default();
+        extra.count = self.read_i32::<E>()?;
+
+        let mut source_object = ObjectReference::default();
+        self.read_object_reference::<E>(&mut source_object, &header.map_name)?;
+        extra.source = source_object;
+
+        let mut target_object = ObjectReference::default();
+        self.read_object_reference::<E>(&mut target_object, &header.map_name)?;
+        extra.target = target_object;
+
+        object.set_extra(ObjectExtra::PowerLine(extra));
+      },
+      Some(ObjectHeaderType::Vehicle) => {
+        let mut extra = Extra::default();
+        extra.count = self.read_i32::<E>()?;
+
+        let num_elements = self.read_i32::<E>()?;
+        for _ in 0..num_elements {
+          let mut element = Vehicle::default();
+          element.name = self.read_length_prefixed_string::<E>()?;
+          element.unk_str_1 = self.read_hex::<E>(105)?;
+          extra.elements.push(element);
+        }
+
+        object.set_extra(ObjectExtra::Vehicle(extra));
+      },
+      None => {
+        // Handles any number of missing bytes by seeking past that amount of bytes
+        let missing_bytes = current_object_end_position - current_position;
+
+        if missing_bytes > 4 {
+          if object_header.get_type_path().starts_with("/Script/FactoryGame.FG") {
+            self.seek_relative(8)?;
+          } else {
+            let skipped = self.read_hex::<E>(missing_bytes as usize)?;
+            warn!("Missing {missing_bytes} bytes at {}: {skipped}", object_header.get_type_path());
+          }
+        } else {
+          self.seek_relative(4)?;
+        }
+      },
     }
 
     Ok(object)
@@ -1271,11 +1457,13 @@ pub trait ReadSaveFileBytes: ReadBytesExt + Seek {
   fn read_levels<E: ByteOrder>(&mut self, header: &Header) -> Result<Vec<Level>> {
     let mut levels: Vec<Level> = vec![];
 
-    let num_levels = self.read_i32::<E>()?;
+    let num_levels = self.read_i32::<E>()? + 1;
     debug!(">> Reading {num_levels} levels");
-    for i in 0..num_levels {
-      debug!(">> Reading level {}/{} @ byte {}", i + 1, num_levels, self.stream_position()?);
-      levels.push(self.read_level::<E>(i, i == num_levels, header)?);
+    for i in 1..=num_levels {
+      debug!(">> Reading level {}/{} @ byte {}", i, num_levels, self.stream_position()?);
+      let level = self.read_level::<E>(i, i == num_levels, header)?;
+      // println!(">> Level {}: Objects: {}", i, level.objects.len());
+      levels.push(level);
     }
 
     Ok(levels)

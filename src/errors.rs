@@ -22,6 +22,12 @@ pub enum ParseError {
   #[error("Unknown object type: {0}")]
   UnknownObject(i32),
 
+  #[error("Unknown player type: {0}")]
+  UnknownPlayerType(u8),
+
+  #[error("Unknown player ID type: {0}")]
+  UnknownPlayerIDType(u8),
+
   #[error("Object longer than specified: {0}")]
   ObjectLength(String),
 

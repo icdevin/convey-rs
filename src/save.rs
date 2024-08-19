@@ -4,6 +4,50 @@ use serde::{Serialize, Deserialize};
 
 use crate::property::*;
 
+const GAME_PATHS: [&str; 2] = [
+  "/Game/FactoryGame/-Shared/Blueprint/BP_GameState.BP_GameState_C",
+  "/Game/FactoryGame/-Shared/Blueprint/BP_GameMode.BP_GameMode_C",
+];
+const PLAYER_STATE_PATHS: [&str; 1] = [
+  "/Game/FactoryGame/Character/Player/BP_PlayerState.BP_PlayerState_C",
+];
+const CONVEYOR_PATHS: [&str; 10] = [
+  "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk1/Build_ConveyorBeltMk1.Build_ConveyorBeltMk1_C",
+  "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk2/Build_ConveyorBeltMk2.Build_ConveyorBeltMk2_C",
+  "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk3/Build_ConveyorBeltMk3.Build_ConveyorBeltMk3_C",
+  "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk4/Build_ConveyorBeltMk4.Build_ConveyorBeltMk4_C",
+  "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk5/Build_ConveyorBeltMk5.Build_ConveyorBeltMk5_C",
+  "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk1/Build_ConveyorLiftMk1.Build_ConveyorLiftMk1_C",
+  "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk2/Build_ConveyorLiftMk2.Build_ConveyorLiftMk2_C",
+  "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk3/Build_ConveyorLiftMk3.Build_ConveyorLiftMk3_C",
+  "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk4/Build_ConveyorLiftMk4.Build_ConveyorLiftMk4_C",
+  "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk5/Build_ConveyorLiftMk5.Build_ConveyorLiftMk5_C",
+];
+const POWER_LINE_PATHS: [&str; 2] = [
+  "/Game/FactoryGame/Buildable/Factory/PowerLine/Build_PowerLine.Build_PowerLine_C",
+  "/Game/FactoryGame/Events/Christmas/Buildings/PowerLineLights/Build_XmassLightsLine.Build_XmassLightsLine_C",
+];
+const DRONE_TRANSPORT_PATHS: [&str; 1] = [
+  "/Game/FactoryGame/Buildable/Factory/DroneStation/BP_DroneTransport.BP_DroneTransport_C",
+];
+const CIRCUIT_PATHS: [&str; 1] = [
+  "/Game/FactoryGame/-Shared/Blueprint/BP_CircuitSubsystem.BP_CircuitSubsystem_C",
+];
+const VEHICLE_PATHS: [&str; 6] = [
+  "/Game/FactoryGame/Buildable/Vehicle/Tractor/BP_Tractor.BP_Tractor_C",
+  "/Game/FactoryGame/Buildable/Vehicle/Truck/BP_Truck.BP_Truck_C",
+  "/Game/FactoryGame/Buildable/Vehicle/Explorer/BP_Explorer.BP_Explorer_C",
+  "/Game/FactoryGame/Buildable/Vehicle/Cyberwagon/Testa_BP_WB.Testa_BP_WB_C",
+  "/Game/FactoryGame/Buildable/Vehicle/Golfcart/BP_Golfcart.BP_Golfcart_C",
+  "/Game/FactoryGame/Buildable/Vehicle/Golfcart/BP_GolfcartGold.BP_GolfcartGold_C",
+];
+const LOCOMOTIVE_PATHS: [&str; 1] = [
+  "/Game/FactoryGame/Buildable/Vehicle/Train/Locomotive/BP_Locomotive.BP_Locomotive_C",
+];
+const FREIGHT_WAGON_PATHS: [&str; 1] = [
+  "/Game/FactoryGame/Buildable/Vehicle/Train/Wagon/BP_FreightWagon.BP_FreightWagon_C",
+];
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Save {
   pub header: Header,
@@ -33,18 +77,11 @@ pub struct Header {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Partition {
-  pub unk_num_1: i32,
-  pub unk_num_2: i32,
   pub levels: HashMap<String, u32>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Partitions {
-  pub unk_str_1: String,
-  pub unk_str_2: String,
-  pub unk_num_1: i64,
-  pub unk_num_2: i32,
-  pub unk_num_3: i32,
   pub partitions: HashMap<String, Partition>,
 }
 
@@ -78,12 +115,50 @@ pub enum ObjectHeader {
   Actor(ActorHeader),
 }
 
+pub enum ObjectHeaderType {
+  Circuit,
+  Conveyor,
+  DroneTransport,
+  FreightWagon,
+  Game,
+  Locomotive,
+  PlayerState,
+  PowerLine,
+  Vehicle,
+}
+
 impl ObjectHeader {
   pub fn get_type_path(&self) -> &String {
     match self {
       ObjectHeader::Component(c) => &c.type_path,
       ObjectHeader::Actor(a) => &a.type_path,
     }
+  }
+
+  pub fn get_type(&self) -> Option<ObjectHeaderType> {
+    let type_path = &self.get_type_path().as_str();
+
+    if CIRCUIT_PATHS.contains(type_path) {
+      return Some(ObjectHeaderType::Circuit);
+    } else if CONVEYOR_PATHS.contains(type_path) {
+      return Some(ObjectHeaderType::Conveyor);
+    } else if DRONE_TRANSPORT_PATHS.contains(type_path) {
+      return Some(ObjectHeaderType::DroneTransport);
+    } else if FREIGHT_WAGON_PATHS.contains(type_path) {
+      return Some(ObjectHeaderType::FreightWagon);
+    } else if GAME_PATHS.contains(type_path) {
+      return Some(ObjectHeaderType::Game);
+    } else if LOCOMOTIVE_PATHS.contains(type_path) {
+      return Some(ObjectHeaderType::Locomotive);
+    } else if PLAYER_STATE_PATHS.contains(type_path) {
+      return Some(ObjectHeaderType::PlayerState);
+    } else if POWER_LINE_PATHS.contains(type_path) {
+      return Some(ObjectHeaderType::PowerLine);
+    } else if VEHICLE_PATHS.contains(type_path) {
+      return Some(ObjectHeaderType::Vehicle);
+    }
+
+    None
   }
 }
 
@@ -142,6 +217,8 @@ pub struct ComponentObject {
   pub save_version: i32,
   pub size_bytes: i32,
   pub properties: Vec<Property>,
+  pub missing: Option<String>,
+  pub extra: Option<ObjectExtra>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -154,6 +231,90 @@ pub struct ActorObject {
   pub num_components: i32,
   pub components: Vec<ObjectReference>,
   pub properties: Vec<Property>,
+  pub missing: Option<String>,
+  pub extra: Option<ObjectExtra>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct DroneTransportAction {
+  pub name: String,
+  pub properties: Vec<Property>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct DroneTransport {
+  pub unk_int_1: i32,
+  pub unk_int_2: i32,
+  pub active_action: Vec<DroneTransportAction>,
+  pub action_queue: Vec<DroneTransportAction>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct PlayerState {
+  pub count: i32,
+  pub eos_id: Option<String>,
+  pub steam_id: Option<String>,
+  pub platform_id: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Circuit {
+  pub id: i32,
+  pub level_name: String,
+  pub path_name: String,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Conveyor {
+  pub length: i32,
+  pub name: String,
+  pub position: f32,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Locomotive {
+  pub name: String,
+  pub unk_str_1: String,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct LocomotiveExtra {
+  pub count: i32,
+  pub elements: Vec<Locomotive>,
+  pub prev: ObjectReference,
+  pub next: ObjectReference,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct PowerLine {
+  pub count: i32,
+  pub source: ObjectReference,
+  pub target: ObjectReference,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Vehicle {
+  pub name: String,
+  pub unk_str_1: String,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Extra<T> {
+  pub count: i32,
+  pub elements: Vec<T>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ObjectExtra {
+  Circuit(Extra<Circuit>),
+  Conveyor(Extra<Conveyor>),
+  DroneTransport(DroneTransport),
+  Game(Extra<ObjectReference>),
+  Locomotive(LocomotiveExtra),
+  PlayerState(PlayerState),
+  PowerLine(PowerLine),
+  Vehicle(Extra<Vehicle>),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -189,6 +350,20 @@ impl Object {
     match self {
       Object::Actor(a) => a.properties.push(property),
       Object::Component(c) => c.properties.push(property),
+    }
+  }
+
+  pub fn set_extra(&mut self, extra: ObjectExtra) {
+    match self {
+      Object::Actor(a) => a.extra = Some(extra),
+      Object::Component(c) => c.extra = Some(extra),
+    }
+  }
+
+  pub fn set_missing(&mut self, missing: String) {
+    match self {
+      Object::Actor(a) => a.missing = Some(missing),
+      Object::Component(c) => c.missing = Some(missing),
     }
   }
 }
